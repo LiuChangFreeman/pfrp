@@ -1,0 +1,37 @@
+# See https://help.github.com/ignore-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+
+# testing
+/coverage
+
+# production
+/build
+
+# release
+/release
+
+# jetbrains
+/.idea
+
+# vscode
+/.vscode
+
+# misc
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# yarn lock file
+yarn.lock
+
+# secrets
+secrets.*.js
+
+# logs
+yarn-error.log
+
+/logs
