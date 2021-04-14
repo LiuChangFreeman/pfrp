@@ -24,7 +24,7 @@ def init():
     if not os.path.exists(path_logs):
         os.mkdir(path_logs)
     log = logging.getLogger('{}'.format(get_date()))
-    log.setLevel(logging.ERROR)
+    log.setLevel(logging.DEBUG)
     fmt = logging.Formatter(fmt="%(asctime)s[]%(message)s", datefmt='%H:%M:%S')
 
     terminal_handler = logging.StreamHandler()

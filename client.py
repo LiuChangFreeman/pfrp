@@ -84,9 +84,9 @@ def main():
     init()
     file_config=os.path.join(path_current,"config.json")
     if os.path.exists(file_config):
-        data_config=json.load(open(file_config))
+        data_config=json.loads(open(file_config).read().encode("utf-8"))
     else:
-        log.warning("no config file found, use default")
+        log.warn("no config file found, use default")
         data_config={
           "server_host": "172.17.231.150",
           "forward_port": 8000,

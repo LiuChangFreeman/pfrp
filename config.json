@@ -1,10 +1,10 @@
 {
-  "server_host": "localhost",
+  "server_host": "172.17.231.150",
   "server_service_port": 9000,
   "forward_port": 8000,
   "client_host": "localhost",
-  "client_service_port": 80,
-  "num_process": 4,
+  "client_service_port": 9090,
+  "num_process": 1,
   "forward_connection_factor":2,
   "password": "pfrp"
 }
