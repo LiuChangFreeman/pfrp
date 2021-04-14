@@ -2,9 +2,9 @@
   "server_host": "172.17.231.150",
   "server_service_port": 9000,
   "forward_port": 8000,
-  "client_host": "localhost",
-  "client_service_port": 9090,
-  "num_process": 1,
-  "forward_connection_factor":2,
+  "client_host": "192.168.31.216",
+  "client_service_port": 27017,
+  "num_process": 4,
+  "connection_pool_factor":1.5,
   "password": "pfrp"
 }

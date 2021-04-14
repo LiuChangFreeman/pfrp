@@ -11,7 +11,7 @@ from multiprocessing import Process
 from util import CoreUtil,ServerServiceConnection,ServerForwardConnection,ConnectionStatus
 
 max_connection=1024
-epoll_wait_timeout = 10
+epoll_wait_timeout = 5
 path_current = os.path.split(os.path.realpath(__file__))[0]
 log=None
 
@@ -28,7 +28,7 @@ def init():
     fmt = logging.Formatter(fmt="%(asctime)s[]%(message)s", datefmt='%H:%M:%S')
 
     terminal_handler = logging.StreamHandler()
-    terminal_handler.setLevel(logging.DEBUG)
+    terminal_handler.setLevel(logging.ERROR)
     terminal_handler.setFormatter(fmt)
 
     path_log=os.path.join(path_logs,'server_{}.log'.format(get_date()))
@@ -110,9 +110,10 @@ def worker(data_config=None):
                     current_connection.schedule_when_epoll_out()
                 else:
                     current_connection.status=ConnectionStatus.dead
-                if current_connection.status == ConnectionStatus.dead:
-                    current_connection.close()
             core_util.schedule()
+        for current_connection in core_util.fd_2_connection_table.values():
+            if current_connection.status == ConnectionStatus.dead:
+                current_connection.close()
     epoll.close()
 
 def main():
@@ -140,7 +141,6 @@ def main():
         p.start()
     for p in processes:
         p.join()
-    # worker(data_config)
 
 if __name__=="__main__":
     main()

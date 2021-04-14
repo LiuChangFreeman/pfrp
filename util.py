@@ -33,18 +33,24 @@ class CoreUtil():
         ready_service_connections=self.ready_service_connections
         for i in range(len(ready_service_connections) - 1, -1, -1):
             service_connection=ready_service_connections[i]
-            connections_pool = peek_pair_connections_pool(self.available_forward_connections)
+            available_forward_connections=self.available_forward_connections
+            connections_pool = peek_pair_connections_pool(available_forward_connections)
             if len(connections_pool)>0:
                 self.log.debug("core_util schedule")
                 fordward_connection=connections_pool.pop()
+                for remote_pid in list(available_forward_connections.keys()):
+                    if len(available_forward_connections[remote_pid])==0:
+                        del available_forward_connections[remote_pid]
                 del ready_service_connections[i]
                 fordward_connection.status = ConnectionStatus.working
                 service_connection.status = ConnectionStatus.working
+                self.log.debug("core_util assign {} to {}".format(fordward_connection.fd,service_connection.fd))
                 self.forward_2_service_table[fordward_connection.fd] = service_connection
                 self.service_2_forward_table[service_connection.fd] = fordward_connection
-                if len(service_connection.read_buffer)!=0:
-                    self.log.debug("core_util request_upstream")
+                if service_connection.read_buffer!="":
                     service_connection.request_upstream()
+            else:
+                self.log.debug("core_util no_available_forward_connections")
 
 class Connection():
     def __init__(self,fd,socket,core_util):
@@ -63,7 +69,7 @@ class Connection():
             self.write_buffer=write_buffer[length_done:]
         except socket.error as e:
             log=self.core_util.log
-            log.warn("send msg error, abort")
+            log.warning("send msg error, abort")
             log.error(e)
             self.status=ConnectionStatus.dead
 
@@ -71,14 +77,14 @@ class Connection():
         log = self.core_util.log
         connection_socket=self.connection_socket
         try:
-            temp_buffer=connection_socket.recv(4096)
+            temp_buffer=connection_socket.recv(409600)
             if temp_buffer:
                 self.read_buffer += temp_buffer
             else:
-                log.warn('connection close, abort')
+                log.warning('connection close, abort')
                 self.status = ConnectionStatus.dead
         except socket.error as e:
-            log.warn("recv msg error, abort")
+            log.warning("recv msg error, abort")
             log.error(e)
             self.status=ConnectionStatus.dead
 
@@ -133,8 +139,8 @@ class ServerForwardConnection(ForwardConnection):
             self.core_util.log.debug("recv_password_authentic")
             self.recv_password_authentic()
         elif status==ConnectionStatus.working:
-            self.core_util.log.debug("server_forward_connection handle_downstream_request")
-            self.handle_downstream_request()
+            self.core_util.log.debug("server_forward_connection handle_downstream_response")
+            self.handle_downstream_response()
 
     def schedule_when_epoll_out(self):
         status = self.status
@@ -145,16 +151,19 @@ class ServerForwardConnection(ForwardConnection):
             self.core_util.log.debug("server_forward_connection handle_upstream_request")
             self.handle_upstream_request()
 
-    def handle_downstream_request(self):
+    def handle_downstream_response(self):
         core_util = self.core_util
         fd = self.fd
         epoll = core_util.epoll
         forward_2_service_table=core_util.forward_2_service_table
         connection_in_pair=forward_2_service_table[fd]
-        # core_util.log.debug(self.read_buffer)
         connection_in_pair.write_buffer+=self.read_buffer
         self.read_buffer=""
-        epoll.modify(connection_in_pair.fd, select.EPOLLOUT)
+        try:
+            epoll.modify(connection_in_pair.fd, select.EPOLLOUT)
+        except:
+            core_util.log.debug("server_forward_connection downstream_closed")
+            self.status=ConnectionStatus.dead
 
     def handle_upstream_request(self):
         self.send()
@@ -178,9 +187,9 @@ class ServerForwardConnection(ForwardConnection):
                     log.debug("confirm password succeed, remote pid:{}".format(remote_pid))
                 else:
                     self.status = ConnectionStatus.dead
-                    log.warn("wrong password")
+                    log.warning("wrong password")
             except Exception as e:
-                log.warn("fail to parse password_authentic")
+                log.warning("fail to parse password_authentic")
                 log.debug(e)
                 self.status = ConnectionStatus.dead
 
@@ -209,8 +218,11 @@ class ClientForwardConnection(ForwardConnection):
             self.core_util.log.debug("recv_password_response")
             self.recv_password_response()
         elif status == ConnectionStatus.ready:
+            self.core_util.log.debug("client_forward_connection new_forward_request")
+            self.remove()
             self.core_util.log.debug("client_forward_connection spawn_client_service_connection")
             self.spawn_client_service_connection()
+            self.core_util.log.debug("client_forward_connection request_upstream")
             self.request_upstream()
         elif status == ConnectionStatus.working:
             self.core_util.log.debug("client_forward_connection request_upstream")
@@ -222,10 +234,29 @@ class ClientForwardConnection(ForwardConnection):
             self.core_util.log.debug("send_password_authentic")
             self.send_password_authentic()
         elif status == ConnectionStatus.working:
-            self.core_util.log.debug("client_forward_connection handle_downstream_request")
-            self.handle_downstream_request()
+            self.core_util.log.debug("client_forward_connection handle_downstream_response")
+            self.handle_downstream_response()
 
-    def handle_downstream_request(self):
+    def request_upstream(self):
+        core_util = self.core_util
+        fd = self.fd
+        epoll = core_util.epoll
+        forward_2_service_table=core_util.forward_2_service_table
+        if fd in forward_2_service_table:
+            connection_in_pair=forward_2_service_table[fd]
+            connection_in_pair.write_buffer+=self.read_buffer
+            self.read_buffer=""
+            try:
+                epoll.modify(connection_in_pair.fd, select.EPOLLOUT)
+            except:
+                core_util.log.debug("client_forward_connection upstream_closed")
+                self.status=ConnectionStatus.dead
+        else:
+            core_util.log.debug("client_forward_connection connection_in_pair_closed")
+            self.status = ConnectionStatus.dead
+
+
+    def handle_downstream_response(self):
         self.send()
         if len(self.write_buffer)==0:
             self.core_util.epoll.modify(self.fd, select.EPOLLIN)
@@ -242,7 +273,7 @@ class ClientForwardConnection(ForwardConnection):
             service_socket.setblocking(False)
         except socket.error as e:
             log=core_util.log
-            log.warn("connent to client server error, abort")
+            log.warning("connent to client server error, abort")
             log.error(e)
             self.status=ConnectionStatus.dead
             return
@@ -256,15 +287,6 @@ class ClientForwardConnection(ForwardConnection):
         self.status=ConnectionStatus.working
         client_service_connection.status=ConnectionStatus.working
 
-    def request_upstream(self):
-        core_util = self.core_util
-        fd = self.fd
-        epoll = core_util.epoll
-        forward_2_service_table=core_util.forward_2_service_table
-        connection_in_pair=forward_2_service_table[fd]
-        connection_in_pair.write_buffer+=self.read_buffer
-        self.read_buffer=""
-        epoll.modify(connection_in_pair.fd, select.EPOLLOUT)
 
     def send_password_authentic(self):
         if len(self.write_buffer)==0:
@@ -292,10 +314,10 @@ class ClientForwardConnection(ForwardConnection):
                     log.debug("confirm password succeed, remote pid:{}".format(remote_pid))
                 else:
                     self.status = ConnectionStatus.dead
-                    log.warn("fail to confirm password")
+                    log.warning("fail to confirm password")
             except:
                 self.status = ConnectionStatus.dead
-                log.warn("fail to parse password_response")
+                log.warning("fail to parse password_response")
 
 class ServiceConnection(Connection):
     def __init__(self,fd,socket,core_util):
@@ -308,20 +330,26 @@ class ServiceConnection(Connection):
         epoll = core_util.epoll
         service_2_forward_table=core_util.service_2_forward_table
         connection_in_pair=service_2_forward_table[fd]
-        connection_in_pair.write_buffer=self.read_buffer
+        connection_in_pair.write_buffer+=self.read_buffer
         self.read_buffer=""
-        epoll.modify(connection_in_pair.fd, select.EPOLLOUT)
+        try:
+            epoll.modify(connection_in_pair.fd, select.EPOLLOUT)
+        except:
+            core_util.log.debug("server_service_connection upstream_closed")
+            self.status=ConnectionStatus.dead
 
     def close(self):
         Connection.close(self)
         core_util = self.core_util
         fd = self.fd
-        self.core_util.log.debug("close service connection {}".format(fd))
-        service_2_forward_table = core_util.forward_2_service_table
+        self.core_util.log.debug("server_service_connection close_connection {}".format(fd))
+        service_2_forward_table = core_util.service_2_forward_table
         if fd in service_2_forward_table:
             connection_in_pair = service_2_forward_table[fd]
             connection_in_pair.status = ConnectionStatus.dead
             del service_2_forward_table[fd]
+            self.core_util.log.debug("server_service_connection close_connection_in_pair {}".format(
+                connection_in_pair.fd))
 
 class ServerServiceConnection(ServiceConnection):
     def __init__(self,fd,socket,core_util):
@@ -330,17 +358,16 @@ class ServerServiceConnection(ServiceConnection):
     def schedule_when_epoll_in(self):
         self.recv()
         core_util=self.core_util
-        core_util.log.debug("server_service_connection receive request")
+        core_util.log.debug("server_service_connection receive_remote_request")
         status = self.status
-        core_util.log.debug(status)
         if status==ConnectionStatus.ready:
-            core_util.log.debug("need schedule")
+            core_util.log.debug("server_service_connection need_schedule")
         elif status==ConnectionStatus.working:
             core_util.log.debug("server_service_connection request_upstream")
             self.request_upstream()
 
     def schedule_when_epoll_out(self):
-        self.core_util.log.debug("server_service_connection response")
+        self.core_util.log.debug("server_service_connection send_downstream_response")
         status=self.status
         if status==ConnectionStatus.working:
             self.core_util.log.debug("server_service_connection working")
@@ -362,12 +389,17 @@ class ClientServiceConnection(ServiceConnection):
         connection_in_pair = service_2_forward_table[fd]
         connection_in_pair.write_buffer += self.read_buffer
         self.read_buffer = ""
-        epoll.modify(connection_in_pair.fd, select.EPOLLOUT)
+        try:
+            epoll.modify(connection_in_pair.fd, select.EPOLLOUT)
+        except:
+            core_util.log.debug("client_service_connection downstream_closed")
+            self.status=ConnectionStatus.dead
 
     def schedule_when_epoll_in(self):
         self.recv()
         self.core_util.log.debug("client_service_connection request_upstream")
         self.request_upstream()
+
 
     def schedule_when_epoll_out(self):
         self.send()

@@ -8,7 +8,7 @@ import os
 import socket
 import select
 from multiprocessing import Process
-from util import CoreUtil,ClientServiceConnection,ClientForwardConnection,ConnectionStatus
+from util import CoreUtil,ClientForwardConnection,ConnectionStatus
 
 max_connection=1024
 epoll_wait_timeout = 10
@@ -28,7 +28,7 @@ def init():
     fmt = logging.Formatter(fmt="%(asctime)s[]%(message)s", datefmt='%H:%M:%S')
 
     terminal_handler = logging.StreamHandler()
-    terminal_handler.setLevel(logging.DEBUG)
+    terminal_handler.setLevel(logging.ERROR)
     terminal_handler.setFormatter(fmt)
 
     path_log=os.path.join(path_logs,'client_{}.log'.format(get_date()))
@@ -50,10 +50,14 @@ def worker(data_config=None):
     core_util.epoll=epoll
 
     while True:
+        need_spawn_new_connection=False
         remote_forward_connections=core_util.available_forward_connections
-        length_remote_forward_connections=len(remote_forward_connections.keys())
-        if length_remote_forward_connections<data_config["num_process"]:
-            log.debug("spawn new connection:{}".format(length_remote_forward_connections))
+        count_remote_forward_connections=len(remote_forward_connections.keys())
+        log.debug("available_forward_connection_number:{}".format(count_remote_forward_connections))
+        if count_remote_forward_connections<data_config["num_process"]:
+            need_spawn_new_connection=True
+        if need_spawn_new_connection:
+            log.debug("spawn new connection:{}".format(count_remote_forward_connections))
             forward_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             fordward_address = (server_host, forward_port)
             forward_socket.connect(fordward_address)
@@ -67,6 +71,11 @@ def worker(data_config=None):
         events = epoll.poll(epoll_wait_timeout)
         if not events:
             log.info("epoll timeout......")
+            # current_remote_forward_connections=[]
+            # for remote_ip in remote_forward_connections:
+            #     current_remote_forward_connections+=remote_forward_connections[remote_ip]
+            # current_remote_forward_connections=[connection.status for connection in current_remote_forward_connections]
+            # log.debug(current_remote_forward_connections)
             continue
         for fd, event in events:
             current_connection = core_util.fd_2_connection_table[fd]
@@ -76,6 +85,7 @@ def worker(data_config=None):
                 current_connection.schedule_when_epoll_out()
             else:
                 current_connection.status=ConnectionStatus.dead
+        for current_connection in core_util.fd_2_connection_table.values():
             if current_connection.status == ConnectionStatus.dead:
                 current_connection.close()
     epoll.close()
