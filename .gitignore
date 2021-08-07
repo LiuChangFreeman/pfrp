@@ -35,3 +35,4 @@ secrets.*.js
 yarn-error.log
 
 /logs
+*.pyc
